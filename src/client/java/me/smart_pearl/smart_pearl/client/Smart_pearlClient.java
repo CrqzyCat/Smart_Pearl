@@ -8,6 +8,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -36,6 +37,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         });
 
+        // HUD-Zähler
         HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null || client.options.hudHidden) return;
@@ -46,55 +48,59 @@ public class Smart_pearlClient implements ClientModInitializer {
     private void renderPearlHud(DrawContext context, MinecraftClient client) {
         TextRenderer renderer = client.textRenderer;
         int totalPearls = 0;
-        ItemStack referenceStack = ItemStack.EMPTY;
+        ItemStack pearlStackFromInv = null;
 
-        // Inventar-Check
+        // Wir gehen durch das Inventar und suchen echte Perlen-Stacks
         for (int i = 0; i < client.player.getInventory().size(); i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
+            if (stack != null && stack.isOf(Items.ENDER_PEARL)) {
                 totalPearls += stack.getCount();
-                if (referenceStack.isEmpty()) referenceStack = stack;
+                if (pearlStackFromInv == null) pearlStackFromInv = stack;
             }
         }
 
-        // Position: 95 Pixel rechts von der Hotbar-Mitte
+        // Position: Rechts neben der Hotbar
         int x = (context.getScaledWindowWidth() / 2) + 95;
         int y = context.getScaledWindowHeight() - 22;
 
-        // 1. ZUERST DEN TEXT ZEICHNEN (damit er nicht vom Icon verdeckt wird)
-        // Die Zahl "xAnzahl"
-        String countText = "x" + totalPearls;
-        context.drawText(renderer, countText, x + 20, y + 5, 0xFFFFFF, true);
-
-        // 2. DEN COOLDOWN ZEICHNEN
-        if (!referenceStack.isEmpty()) {
-            float progress = client.player.getItemCooldownManager().getCooldownProgress(referenceStack, 0.0f);
-            if (progress > 0.0f) {
-                // Zeige den Fortschritt als Text über dem Icon
-                String cdText = String.format("%.1fs", progress * 1.0f);
-                context.drawText(renderer, cdText, x, y - 12, 0xFF5555, true);
-            }
-        }
-
-        // 3. DANACH DAS ICON (DrawItem setzt oft den Z-Index zurück)
+        // 1. Das Icon (Wir nehmen einfach ein neues, das ist egal)
         context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
+
+        // 2. Die Zahl (Wir erzwingen die Darstellung)
+        String countText = String.valueOf(totalPearls);
+        context.drawTextWithShadow(renderer, "x" + countText, x + 18, y + 6, 0xFFFFFF);
+
+        // 3. Cooldown (Nur wenn wir eine echte Perle im Inventar gefunden haben)
+        if (pearlStackFromInv != null) {
+            // 0.0f als Delta-Ersatz für Loom 1.15
+            float progress = client.player.getItemCooldownManager().getCooldownProgress(pearlStackFromInv, 0.0f);
+
+            if (progress > 0.0f) {
+                String cdText = String.format("%.1fs", progress * 1.0f);
+                context.drawTextWithShadow(renderer, cdText, x, y - 10, 0xFF5555);
+            }
+        } else {
+            // Falls keine Perlen da sind, zeigen wir "x0" an damit du siehst, dass es geht
+            context.drawTextWithShadow(renderer, "x0", x + 18, y + 6, 0xAAAAAA);
+        }
     }
 
     private void executeSmartPearl(MinecraftClient client) {
         int pearlSlotIndex = -1;
-        ItemStack pearlStack = ItemStack.EMPTY;
+        ItemStack foundStack = null;
 
         for (int i = 0; i < 36; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
+            if (stack != null && stack.isOf(Items.ENDER_PEARL)) {
                 pearlSlotIndex = i;
-                pearlStack = stack;
+                foundStack = stack;
                 break;
             }
         }
 
-        if (pearlSlotIndex != -1 && !pearlStack.isEmpty()) {
-            if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
+        if (pearlSlotIndex != -1 && foundStack != null) {
+            // Hier nutzen wir den ItemStack für den Check
+            if (client.player.getItemCooldownManager().isCoolingDown(foundStack)) return;
 
             int originalSlot = client.player.getInventory().getSelectedSlot();
             float yaw = client.player.getYaw();
