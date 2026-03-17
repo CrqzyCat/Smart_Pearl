@@ -54,25 +54,28 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         }
 
+        // Koordinaten (etwas höher angesetzt, um Z-Ebenen-Probleme mit der Hotbar zu meiden)
         int x = (context.getScaledWindowWidth() / 2) + 95;
-        int y = context.getScaledWindowHeight() - 22;
+        int y = context.getScaledWindowHeight() - 35; // <- Vorher -22, jetzt -35 (weiter oben)
 
-        // Wir erstellen EINEN ItemStack, um die Fehler aus deinen Screenshots zu vermeiden
         ItemStack pearlIcon = new ItemStack(Items.ENDER_PEARL);
 
         // 1. Icon zeichnen
         context.drawItem(pearlIcon, x, y);
 
-        // 2. Text zeichnen (Matrix-Befehle entfernt, drawTextWithShadow bleibt, da es fehlerfrei war)
+        // 2. Text zeichnen (WICHTIG: 0xFFFFFFFF statt 0xFFFFFF für 100% Deckkraft!)
         TextRenderer tr = client.textRenderer;
         String countStr = "x" + totalPearls;
-        context.drawTextWithShadow(tr, countStr, x + 18, y + 6, 0xFFFFFF);
 
-        // 3. Cooldown abfragen (mit dem ItemStack!)
+        // Nutze 0xFFFFFFFF für strahlendes Weiß mit vollem Alpha-Kanal
+        context.drawTextWithShadow(tr, countStr, x + 18, y + 6, 0xFFFFFFFF);
+
+        // 3. Cooldown abfragen
         float progress = client.player.getItemCooldownManager().getCooldownProgress(pearlIcon, 0.0f);
         if (progress > 0.0f) {
             String cdText = String.format("%.1fs", progress);
-            context.drawTextWithShadow(tr, cdText, x, y - 10, 0xFF5555);
+            // Nutze 0xFFFF5555 für Rot mit vollem Alpha-Kanal
+            context.drawTextWithShadow(tr, cdText, x, y - 10, 0xFFFF5555);
         }
     }
 
