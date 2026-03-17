@@ -28,7 +28,7 @@ public class Smart_pearlClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         pearlKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.smart_pearl.throw",
+                "Throw Smart Pearl",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_V,
                 KeyBinding.Category.MISC
