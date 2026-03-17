@@ -8,7 +8,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -20,6 +19,7 @@ import org.lwjgl.glfw.GLFW;
 public class Smart_pearlClient implements ClientModInitializer {
 
     private static KeyBinding pearlKey;
+    private int debugTick = 0;
 
     @Override
     public void onInitializeClient() {
@@ -31,13 +31,12 @@ public class Smart_pearlClient implements ClientModInitializer {
         ));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.player == null || client.interactionManager == null) return;
+            if (client.player == null) return;
             while (pearlKey.wasPressed()) {
                 executeSmartPearl(client);
             }
         });
 
-        // HUD-Zähler
         HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null || client.options.hudHidden) return;
@@ -46,75 +45,71 @@ public class Smart_pearlClient implements ClientModInitializer {
     }
 
     private void renderPearlHud(DrawContext context, MinecraftClient client) {
-        TextRenderer renderer = client.textRenderer;
         int totalPearls = 0;
-        ItemStack pearlStackFromInv = null;
+        ItemStack referenceStack = null;
 
-        // Wir gehen durch das Inventar und suchen echte Perlen-Stacks
+        // Inventar-Check
         for (int i = 0; i < client.player.getInventory().size(); i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (stack != null && stack.isOf(Items.ENDER_PEARL)) {
+            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
                 totalPearls += stack.getCount();
-                if (pearlStackFromInv == null) pearlStackFromInv = stack;
+                if (referenceStack == null) referenceStack = stack;
             }
         }
 
-        // Position: Rechts neben der Hotbar
+        // Debug-Log alle 100 Frames (damit die Konsole nicht überflutet wird)
+        if (debugTick++ % 100 == 0) {
+            System.out.println("[SmartPearl] Perlen gefunden: " + totalPearls);
+        }
+
         int x = (context.getScaledWindowWidth() / 2) + 95;
         int y = context.getScaledWindowHeight() - 22;
 
-        // 1. Das Icon (Wir nehmen einfach ein neues, das ist egal)
+        // 1. Icon
         context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
 
-        // 2. Die Zahl (Wir erzwingen die Darstellung)
-        String countText = String.valueOf(totalPearls);
-        context.drawTextWithShadow(renderer, "x" + countText, x + 18, y + 6, 0xFFFFFF);
+        // 2. Anzahl (Wir erzwingen die Farbe und Position)
+        String text = "x" + totalPearls;
+        TextRenderer tr = client.textRenderer;
 
-        // 3. Cooldown (Nur wenn wir eine echte Perle im Inventar gefunden haben)
-        if (pearlStackFromInv != null) {
-            // 0.0f als Delta-Ersatz für Loom 1.15
-            float progress = client.player.getItemCooldownManager().getCooldownProgress(pearlStackFromInv, 0.0f);
+        // Wir zeichnen den Text ETWAS weiter weg vom Icon, um Überlappung zu vermeiden
+        context.drawTextWithShadow(tr, text, x + 20, y + 5, 0xFFFFFF);
 
+        // 3. Cooldown
+        if (referenceStack != null) {
+            float progress = client.player.getItemCooldownManager().getCooldownProgress(referenceStack, 0.0f);
             if (progress > 0.0f) {
-                String cdText = String.format("%.1fs", progress * 1.0f);
-                context.drawTextWithShadow(renderer, cdText, x, y - 10, 0xFF5555);
+                String cd = String.format("%.1fs", progress);
+                context.drawTextWithShadow(tr, cd, x, y - 12, 0xFF5555);
             }
-        } else {
-            // Falls keine Perlen da sind, zeigen wir "x0" an damit du siehst, dass es geht
-            context.drawTextWithShadow(renderer, "x0", x + 18, y + 6, 0xAAAAAA);
         }
     }
 
     private void executeSmartPearl(MinecraftClient client) {
-        int pearlSlotIndex = -1;
-        ItemStack foundStack = null;
+        int pearlSlot = -1;
+        ItemStack pearlStack = null;
 
         for (int i = 0; i < 36; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (stack != null && stack.isOf(Items.ENDER_PEARL)) {
-                pearlSlotIndex = i;
-                foundStack = stack;
+            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
+                pearlSlot = i;
+                pearlStack = stack;
                 break;
             }
         }
 
-        if (pearlSlotIndex != -1 && foundStack != null) {
-            // Hier nutzen wir den ItemStack für den Check
-            if (client.player.getItemCooldownManager().isCoolingDown(foundStack)) return;
+        if (pearlSlot != -1 && pearlStack != null) {
+            if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
 
-            int originalSlot = client.player.getInventory().getSelectedSlot();
-            float yaw = client.player.getYaw();
-            float pitch = client.player.getPitch();
-
-            if (pearlSlotIndex < 9) {
-                client.player.getInventory().setSelectedSlot(pearlSlotIndex);
-                client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, yaw, pitch));
-                client.player.getInventory().setSelectedSlot(originalSlot);
+            int oldSlot = client.player.getInventory().getSelectedSlot();
+            if (pearlSlot < 9) {
+                client.player.getInventory().setSelectedSlot(pearlSlot);
+                client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
+                client.player.getInventory().setSelectedSlot(oldSlot);
             } else {
-                int syncId = client.player.currentScreenHandler.syncId;
-                client.interactionManager.clickSlot(syncId, pearlSlotIndex, originalSlot, SlotActionType.SWAP, client.player);
-                client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, yaw, pitch));
-                client.interactionManager.clickSlot(syncId, pearlSlotIndex, originalSlot, SlotActionType.SWAP, client.player);
+                client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
+                client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
+                client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
             }
         }
     }
