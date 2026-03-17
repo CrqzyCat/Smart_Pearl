@@ -47,56 +47,57 @@ public class Smart_pearlClient implements ClientModInitializer {
     private void renderPearlHud(DrawContext context, MinecraftClient client, RenderTickCounter tickCounter) {
         TextRenderer renderer = client.textRenderer;
         int totalPearls = 0;
-        ItemStack pearlStackForCooldown = null;
+        ItemStack referenceStack = null;
 
+        // Inventar scannen
         for (int i = 0; i < client.player.getInventory().size(); i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (stack.isOf(Items.ENDER_PEARL)) {
+            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
                 totalPearls += stack.getCount();
-                if (pearlStackForCooldown == null) pearlStackForCooldown = stack;
+                // Wir speichern den ersten gefundenen Stack als Referenz für den Cooldown
+                if (referenceStack == null) referenceStack = stack;
             }
         }
-
-        if (totalPearls == 0) return;
 
         // Position: Rechts neben der Hotbar
         int x = (context.getScaledWindowWidth() / 2) + 95;
         int y = context.getScaledWindowHeight() - 22;
 
+        // 1. Icon zeichnen (Immer sichtbar)
         context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
-        context.drawTextWithShadow(renderer, "x" + totalPearls, x + 18, y + 5, 0xFFFFFF);
 
-        if (pearlStackForCooldown != null) {
-            // LÖSUNG FÜR 1.21.1 / LOOM 1.15:
-            // Falls getTickDelta rot bleibt, ist es in deiner Mapping-Version meist getLastFrameDuration()
-            // oder getTickDelta(boolean). Wir nutzen hier getTickDelta(false).
-            float delta = 0.0f;
+        // 2. Anzahl zeichnen
+        context.drawTextWithShadow(renderer, "x" + totalPearls, x + 18, y + 6, 0xFFFFFF);
 
-            float progress = client.player.getItemCooldownManager().getCooldownProgress(pearlStackForCooldown, delta);
+        // 3. Cooldown mit ItemStack-Parameter
+        if (referenceStack != null) {
+            // 0.0f als Delta-Ersatz für Loom 1.15
+            float progress = client.player.getItemCooldownManager().getCooldownProgress(referenceStack, 0.0f);
 
-            if (progress > 0 && progress < 1.0f) {
-                // Anzeige in Sekunden
+            if (progress > 0.0f) {
+                // Anzeige des Cooldowns (1.0 -> 0.0)
                 String cdText = String.format("%.1fs", progress * 1.0f);
-                context.drawTextWithShadow(renderer, cdText, x, y - 10, 0xFF5555);
+                context.drawTextWithShadow(renderer, cdText, x + 2, y - 10, 0xFF5555);
             }
         }
     }
 
     private void executeSmartPearl(MinecraftClient client) {
         int pearlSlotIndex = -1;
-        ItemStack foundStack = null;
+        ItemStack pearlStack = null;
 
         for (int i = 0; i < 36; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (stack.isOf(Items.ENDER_PEARL)) {
+            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
                 pearlSlotIndex = i;
-                foundStack = stack;
+                pearlStack = stack;
                 break;
             }
         }
 
-        if (pearlSlotIndex != -1 && foundStack != null) {
-            if (client.player.getItemCooldownManager().isCoolingDown(foundStack)) return;
+        if (pearlSlotIndex != -1 && pearlStack != null) {
+            // Prüfung mit ItemStack
+            if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
 
             int originalSlot = client.player.getInventory().getSelectedSlot();
             float yaw = client.player.getYaw();
