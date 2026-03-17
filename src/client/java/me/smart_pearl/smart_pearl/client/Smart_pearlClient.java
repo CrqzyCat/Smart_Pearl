@@ -14,6 +14,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
+import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.Hand;
 import org.lwjgl.glfw.GLFW;
@@ -26,7 +27,6 @@ public class Smart_pearlClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // Keybinding registrieren (Standard: V)
         pearlKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.smart_pearl.throw",
                 InputUtil.Type.KEYSYM,
@@ -37,25 +37,23 @@ public class Smart_pearlClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) return;
 
-            // 1. Wurf-Logik beim Drücken der Taste
             while (pearlKey.wasPressed()) {
                 executeSmartPearl(client);
             }
 
-            // 2. Refill-Logik beim kurzen Inventar-Öffnen (<= 0.5 Sek)
+            // 0.3s Refill Logik
             boolean isInvOpen = client.currentScreen instanceof InventoryScreen;
             if (isInvOpen && !wasInventoryOpen) {
                 inventoryOpenTime = System.currentTimeMillis();
             } else if (!isInvOpen && wasInventoryOpen) {
                 long duration = System.currentTimeMillis() - inventoryOpenTime;
-                if (duration <= 500) {
+                if (duration <= 300) {
                     tryRefillHotbar(client);
                 }
             }
             wasInventoryOpen = isInvOpen;
         });
 
-        // HUD Rendering
         HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
             renderPearlHud(drawContext, MinecraftClient.getInstance());
         });
@@ -64,7 +62,6 @@ public class Smart_pearlClient implements ClientModInitializer {
     private void executeSmartPearl(MinecraftClient client) {
         if (client.player == null || client.interactionManager == null || client.getNetworkHandler() == null) return;
 
-        // Prüfen ob Bewegungstasten gedrückt sind
         boolean isMoving = client.options.forwardKey.isPressed() ||
                 client.options.backKey.isPressed() ||
                 client.options.leftKey.isPressed() ||
@@ -73,11 +70,9 @@ public class Smart_pearlClient implements ClientModInitializer {
         int pearlSlot = -1;
         ItemStack pearlStack = null;
 
-        // Slot-Suche
         for (int i = 0; i < 36; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
             if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
-                // Wenn wir uns bewegen, akzeptieren wir NUR Hotbar-Slots (0-8)
                 if (!isMoving || i < 9) {
                     pearlSlot = i;
                     pearlStack = stack;
@@ -92,19 +87,27 @@ public class Smart_pearlClient implements ClientModInitializer {
             int oldSlot = client.player.getInventory().getSelectedSlot();
 
             if (pearlSlot < 9) {
-                // Wurf aus Hotbar (Sicher im Laufen)
-                client.player.getInventory().setSelectedSlot(pearlSlot);
+                // HOTBAR WURF: Jetzt mit explizitem Server-Paket für den Slot-Wechsel
+                if (pearlSlot != oldSlot) {
+                    client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(pearlSlot));
+                }
+
+                // Wurf-Paket
                 sendInteractPacket(client);
-                client.player.getInventory().setSelectedSlot(oldSlot);
+
+                // Sofort zurückwechseln (Server-Paket + Client-Update)
+                if (pearlSlot != oldSlot) {
+                    client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
+                }
             } else {
-                // Wurf aus Inventar (Nur im Stehen)
+                // INVENTAR WURF (nur im Stehen): Swap-Logik
                 client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
                 client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
                 sendInteractPacket(client);
                 client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
             }
         } else if (isMoving) {
-            client.player.sendMessage(net.minecraft.text.Text.literal("§cIm Laufen nur aus Hotbar!"), true);
+            client.player.sendMessage(net.minecraft.text.Text.literal("§cKeine Pearl in der Hotbar!"), true);
         }
     }
 
@@ -162,6 +165,8 @@ public class Smart_pearlClient implements ClientModInitializer {
     }
 
     private void sendInteractPacket(MinecraftClient client) {
-        client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
+        if (client.getNetworkHandler() != null && client.player != null) {
+            client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
+        }
     }
 }
