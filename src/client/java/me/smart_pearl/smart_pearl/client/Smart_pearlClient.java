@@ -45,6 +45,8 @@ public class Smart_pearlClient implements ClientModInitializer {
 
     private void renderPearlHud(DrawContext context, MinecraftClient client) {
         int totalPearls = 0;
+
+        // 1. Zuerst alle Perlen zählen
         for (int i = 0; i < client.player.getInventory().size(); i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
             if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
@@ -52,26 +54,28 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         }
 
-        // RECHNUNG FÜR DIE POSITION:
-        // x bleibt gleich (rechts neben der Hotbar)
-        // y wird vergrößert, um weiter nach UNTEN zu wandern
+        // 2. NEU: Wenn keine Perlen da sind, hier sofort abbrechen (nichts zeichnen)
+        if (totalPearls <= 0) {
+            return;
+        }
+
+        // 3. Ab hier wird nur noch gezeichnet, wenn man mindestens 1 Perle hat
         int x = (context.getScaledWindowWidth() / 2) + 95;
-        int y = context.getScaledWindowHeight() - 20; // Von -35 auf -20 geändert
+        int y = context.getScaledWindowHeight() - 20;
 
         ItemStack pearlIcon = new ItemStack(Items.ENDER_PEARL);
 
-        // 1. Icon zeichnen
+        // Icon zeichnen
         context.drawItem(pearlIcon, x, y);
 
-        // 2. Text zeichnen (x+18 rückt die Zahl ein Stück nach rechts vom Icon weg)
+        // Text zeichnen
         TextRenderer tr = client.textRenderer;
         context.drawTextWithShadow(tr, "x" + totalPearls, x + 18, y + 6, 0xFFFFFFFF);
 
-        // 3. Cooldown
+        // Cooldown anzeigen (falls vorhanden)
         float progress = client.player.getItemCooldownManager().getCooldownProgress(pearlIcon, 0.0f);
         if (progress > 0.0f) {
             String cdText = String.format("%.1fs", progress);
-            // Wir setzen den Cooldown-Text direkt über das Icon
             context.drawTextWithShadow(tr, cdText, x, y - 10, 0xFFFF5555);
         }
     }
