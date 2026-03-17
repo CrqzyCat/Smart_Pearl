@@ -8,7 +8,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -40,51 +39,50 @@ public class Smart_pearlClient implements ClientModInitializer {
         HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null || client.options.hudHidden) return;
-            renderPearlHud(drawContext, client, tickCounter);
+            renderPearlHud(drawContext, client);
         });
     }
 
-    private void renderPearlHud(DrawContext context, MinecraftClient client, RenderTickCounter tickCounter) {
+    private void renderPearlHud(DrawContext context, MinecraftClient client) {
         TextRenderer renderer = client.textRenderer;
         int totalPearls = 0;
-        ItemStack referenceStack = null;
+        ItemStack referenceStack = ItemStack.EMPTY;
 
-        // Inventar scannen
+        // Inventar-Check
         for (int i = 0; i < client.player.getInventory().size(); i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
             if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
                 totalPearls += stack.getCount();
-                // Wir speichern den ersten gefundenen Stack als Referenz für den Cooldown
-                if (referenceStack == null) referenceStack = stack;
+                if (referenceStack.isEmpty()) referenceStack = stack;
             }
         }
 
-        // Position: Rechts neben der Hotbar
+        // Position: 95 Pixel rechts von der Hotbar-Mitte
         int x = (context.getScaledWindowWidth() / 2) + 95;
         int y = context.getScaledWindowHeight() - 22;
 
-        // 1. Icon zeichnen (Immer sichtbar)
-        context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
+        // 1. ZUERST DEN TEXT ZEICHNEN (damit er nicht vom Icon verdeckt wird)
+        // Die Zahl "xAnzahl"
+        String countText = "x" + totalPearls;
+        context.drawText(renderer, countText, x + 20, y + 5, 0xFFFFFF, true);
 
-        // 2. Anzahl zeichnen
-        context.drawTextWithShadow(renderer, "x" + totalPearls, x + 18, y + 6, 0xFFFFFF);
-
-        // 3. Cooldown mit ItemStack-Parameter
-        if (referenceStack != null) {
-            // 0.0f als Delta-Ersatz für Loom 1.15
+        // 2. DEN COOLDOWN ZEICHNEN
+        if (!referenceStack.isEmpty()) {
             float progress = client.player.getItemCooldownManager().getCooldownProgress(referenceStack, 0.0f);
-
             if (progress > 0.0f) {
-                // Anzeige des Cooldowns (1.0 -> 0.0)
+                // Zeige den Fortschritt als Text über dem Icon
                 String cdText = String.format("%.1fs", progress * 1.0f);
-                context.drawTextWithShadow(renderer, cdText, x + 2, y - 10, 0xFF5555);
+                context.drawText(renderer, cdText, x, y - 12, 0xFF5555, true);
             }
         }
+
+        // 3. DANACH DAS ICON (DrawItem setzt oft den Z-Index zurück)
+        context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
     }
 
     private void executeSmartPearl(MinecraftClient client) {
         int pearlSlotIndex = -1;
-        ItemStack pearlStack = null;
+        ItemStack pearlStack = ItemStack.EMPTY;
 
         for (int i = 0; i < 36; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
@@ -95,8 +93,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         }
 
-        if (pearlSlotIndex != -1 && pearlStack != null) {
-            // Prüfung mit ItemStack
+        if (pearlSlotIndex != -1 && !pearlStack.isEmpty()) {
             if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
 
             int originalSlot = client.player.getInventory().getSelectedSlot();
