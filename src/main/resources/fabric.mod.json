@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "smart_pearl",
+  "version": "${version}",
+  "name": "Smart_Pearl",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/smart_pearl/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-datagen": [
+      "me.smart_pearl.smart_pearl.client.Smart_pearlDataGenerator"
+    ],
+    "client": [
+      "me.smart_pearl.smart_pearl.client.Smart_pearlClient"
+    ],
+    "main": [
+      "me.smart_pearl.smart_pearl.Smart_pearl"
+    ]
+  },
+  "mixins": [
+    "smart_pearl.mixins.json",
+    {
+      "config": "smart_pearl.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
