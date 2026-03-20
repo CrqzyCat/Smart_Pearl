@@ -81,36 +81,32 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
 
         if (pearlSlot != -1 && pearlStack != null) {
+            // FIX für image_9a47be.png: Nutzt den ItemStack für den Cooldown-Check
             if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
 
             int oldSlot = client.player.getInventory().getSelectedSlot();
 
             if (pearlSlot < 9) {
-                // HOTBAR WURF: Jetzt mit explizitem Server-Paket für den Slot-Wechsel
                 if (pearlSlot != oldSlot) {
                     client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(pearlSlot));
                 }
-
-                // Wurf-Paket
                 sendInteractPacket(client);
-
-                // Sofort zurückwechseln (Server-Paket + Client-Update)
                 if (pearlSlot != oldSlot) {
                     client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
                 }
             } else {
-                // INVENTAR WURF (nur im Stehen): Swap-Logik
+                // Sprint Stop um Illegal Packet Kicks zu vermeiden
                 client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
                 client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
                 sendInteractPacket(client);
                 client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
             }
-        } else if (isMoving) {
-            client.player.sendMessage(net.minecraft.text.Text.literal("§cKeine Pearl in der Hotbar!"), true);
         }
     }
 
     private void tryRefillHotbar(MinecraftClient client) {
+        if (client.player == null || client.interactionManager == null || client.getNetworkHandler() == null) return;
+
         int pearlInInv = -1;
         for (int i = 9; i < 36; i++) {
             if (client.player.getInventory().getStack(i).isOf(Items.ENDER_PEARL)) {
@@ -123,6 +119,10 @@ public class Smart_pearlClient implements ClientModInitializer {
             for (int h = 0; h < 9; h++) {
                 ItemStack stack = client.player.getInventory().getStack(h);
                 if (stack.isEmpty() || (stack.isOf(Items.ENDER_PEARL) && stack.getCount() < 16)) {
+                    // Verhindert Kicks beim automatischen Refill während des Laufens
+                    if (client.player.isSprinting()) {
+                        client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
+                    }
                     client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlInInv, h, SlotActionType.SWAP, client.player);
                     break;
                 }
@@ -146,7 +146,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         }
 
-        if (total <= 0) return;
+        if (total <= 0 || displayStack == null) return;
 
         int x = (context.getScaledWindowWidth() / 2) + 95;
         int y = context.getScaledWindowHeight() - 20;
@@ -155,11 +155,11 @@ public class Smart_pearlClient implements ClientModInitializer {
         int color = (hotbar > 0) ? 0xFFFFFFFF : 0xFFFF5555;
         context.drawTextWithShadow(client.textRenderer, "x" + total, x + 18, y + 6, color);
 
-        if (displayStack != null) {
-            float progress = client.player.getItemCooldownManager().getCooldownProgress(displayStack, 0.0f);
-            if (progress > 0.0f) {
-                context.drawTextWithShadow(client.textRenderer, String.format("%.1fs", progress), x, y - 10, 0xFFFF5555);
-            }
+        // FIX für image_9a47be.png: Nutzt ItemStack für Cooldown Progress
+        float progress = client.player.getItemCooldownManager().getCooldownProgress(displayStack, 0.0f);
+        if (progress > 0.0f) {
+            String cooldownText = String.format("%.1fs", progress * 2.5f);
+            context.drawTextWithShadow(client.textRenderer, cooldownText, x, y - 10, 0xFFFF5555);
         }
     }
 
