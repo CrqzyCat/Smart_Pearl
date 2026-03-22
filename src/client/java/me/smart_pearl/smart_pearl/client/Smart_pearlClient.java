@@ -40,7 +40,7 @@ public class Smart_pearlClient implements ClientModInitializer {
                 executeSmartPearl(client);
             }
 
-            // 0.3s Refill Logik
+            // 0.3s Refill Logic
             boolean isInvOpen = client.currentScreen instanceof InventoryScreen;
             if (isInvOpen && !wasInventoryOpen) {
                 inventoryOpenTime = System.currentTimeMillis();
@@ -81,7 +81,7 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
 
         if (pearlSlot != -1 && pearlStack != null) {
-            // FIX für image_9a47be.png: Nutzt den ItemStack für den Cooldown-Check
+            // FIX for image_9a47be.png: Use the ItemStack for the cooldown check
             if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
 
             int oldSlot = client.player.getInventory().getSelectedSlot();
@@ -95,7 +95,7 @@ public class Smart_pearlClient implements ClientModInitializer {
                     client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
                 }
             } else {
-                // Sprint Stop um Illegal Packet Kicks zu vermeiden
+                // Stop sprinting to avoid illegal packet kicks
                 client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
                 client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
                 sendInteractPacket(client);
@@ -119,7 +119,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             for (int h = 0; h < 9; h++) {
                 ItemStack stack = client.player.getInventory().getStack(h);
                 if (stack.isEmpty() || (stack.isOf(Items.ENDER_PEARL) && stack.getCount() < 16)) {
-                    // Verhindert Kicks beim automatischen Refill während des Laufens
+                    // Prevents kicks during automatic refill while running
                     if (client.player.isSprinting()) {
                         client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
                     }
@@ -155,7 +155,7 @@ public class Smart_pearlClient implements ClientModInitializer {
         int color = (hotbar > 0) ? 0xFFFFFFFF : 0xFFFF5555;
         context.drawTextWithShadow(client.textRenderer, "x" + total, x + 18, y + 6, color);
 
-        // FIX für image_9a47be.png: Nutzt ItemStack für Cooldown Progress
+        // FIX for image_9a47be.png: Use ItemStack for cooldown progress
         float progress = client.player.getItemCooldownManager().getCooldownProgress(displayStack, 0.0f);
         if (progress > 0.0f) {
             String cooldownText = String.format("%.1fs", progress * 2.5f);
