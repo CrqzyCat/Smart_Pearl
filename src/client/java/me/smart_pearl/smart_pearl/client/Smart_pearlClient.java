@@ -90,12 +90,12 @@ public class Smart_pearlClient implements ClientModInitializer {
                 // Item
                 context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
 
-                // Count (skaliert)
+                // Count (nach links verschoben)
                 String countText = "x" + totalPearls;
                 float scale = 0.7f;
 
                 context.getMatrices().pushMatrix();
-                context.getMatrices().translate(x + 18, y + 11);
+                context.getMatrices().translate(x + 12, y + 11); // <-- HIER geändert (war +18)
                 context.getMatrices().scale(scale, scale);
 
                 context.drawTextWithShadow(client.textRenderer, countText, 0, 0, 0xFFFFFFFF);
