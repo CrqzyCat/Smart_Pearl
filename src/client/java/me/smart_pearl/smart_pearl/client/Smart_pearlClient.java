@@ -36,10 +36,12 @@ public class Smart_pearlClient implements ClientModInitializer {
     private long invOpenTime = 0;
     private boolean wasInvOpen = false;
 
+    // 3-Tick Sequence State
     private int step = 0;
     private int oldSlot = -1;
     private int pearlSlot = -1;
 
+    // --- CONFIG SYSTEM ---
     public static ConfigData config = new ConfigData();
     private static final File CONFIG_FILE = FabricLoader.getInstance().getConfigDir().resolve("smart_pearl.json").toFile();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -67,7 +69,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             }));
         });
 
-        // --- HUD RENDERER ---
+        // --- HUD RENDERER (Rechts neben Hotbar) ---
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null || client.options.hudHidden) return;
@@ -86,28 +88,40 @@ public class Smart_pearlClient implements ClientModInitializer {
             if (totalPearls > 0 && pearlStack != null) {
                 int x = context.getScaledWindowWidth() / 2 + 95;
                 int y = context.getScaledWindowHeight() - 20;
+
+                // 1. Item rendern
                 context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
-                context.drawTextWithShadow(client.textRenderer, String.valueOf(totalPearls), x + 18, y + 6, 0xFFFFFF);
 
-                // SAFE FIX (funktioniert immer)
+                // 2. Anzahl rendern (Farbe 0xFFFFFFFF für volle Sichtbarkeit)
+                String countText = String.valueOf(totalPearls);
+                context.drawTextWithShadow(client.textRenderer, countText, x + 19 - client.textRenderer.getWidth(countText), y + 9, 0xFFFFFFFF);
+
+                // 3. Cooldown mit 0f Fix
                 float cooldown = client.player.getItemCooldownManager().getCooldownProgress(pearlStack, 0f);
-
                 if (cooldown > 0) {
                     String cdText = String.format("%.1fs", cooldown * 1.5);
-                    context.drawTextWithShadow(client.textRenderer, "§c" + cdText, x, y - 10, 0xFFFFFF);
+                    int cdWidth = client.textRenderer.getWidth(cdText);
+                    context.drawTextWithShadow(client.textRenderer, "§c" + cdText, x + 8 - (cdWidth / 2), y - 12, 0xFFFFFFFF);
                 }
             }
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) return;
-            while (pearlKey.wasPressed() && step == 0) startPearlSequence(client);
+
+            while (pearlKey.wasPressed() && step == 0) {
+                startPearlSequence(client);
+            }
+
             if (step > 0) runSequence(client);
 
             boolean isInv = client.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen;
-            if (isInv && !wasInvOpen) invOpenTime = System.currentTimeMillis();
-            else if (!isInv && wasInvOpen) {
-                if (System.currentTimeMillis() - invOpenTime <= (config.refillWindow * 1000L)) tryRefill(client);
+            if (isInv && !wasInvOpen) {
+                invOpenTime = System.currentTimeMillis();
+            } else if (!isInv && wasInvOpen) {
+                if (System.currentTimeMillis() - invOpenTime <= (config.refillWindow * 1000L)) {
+                    tryRefill(client);
+                }
             }
             wasInvOpen = isInv;
         });
@@ -162,6 +176,7 @@ public class Smart_pearlClient implements ClientModInitializer {
                 break;
             }
         }
+
         if (invPearl != -1) {
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = client.player.getInventory().getStack(i);
@@ -192,9 +207,7 @@ public class Smart_pearlClient implements ClientModInitializer {
     }
 
     public static class ConfigScreen extends Screen {
-        public ConfigScreen() {
-            super(Text.literal("Smart Pearl Settings"));
-        }
+        public ConfigScreen() { super(Text.literal("Smart Pearl Settings")); }
 
         @Override
         protected void init() {
@@ -211,29 +224,23 @@ public class Smart_pearlClient implements ClientModInitializer {
 
                 @Override
                 protected void applyValue() {
-                    config.refillWindow = 0.01f + (float) this.value * 0.99f;
+                    config.refillWindow = 0.01f + (float)this.value * 0.99f;
                 }
             });
 
-            this.addDrawableChild(ButtonWidget.builder(
-                    Text.literal("Done"),
-                    b -> {
-                        saveConfig();
-                        this.client.setScreen(null);
-                    }
-            ).dimensions(x, 100, 200, 20).build());
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> {
+                saveConfig();
+                this.client.setScreen(null);
+            }).dimensions(x, 100, 200, 20).build());
         }
 
         @Override
         public void render(DrawContext context, int mouseX, int mouseY, float delta) {
             this.renderInGameBackground(context);
-            context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 25, 0xFFFFFF);
+            context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 25, 0xFFFFFFFF);
             super.render(context, mouseX, mouseY, delta);
         }
 
-        @Override
-        public boolean shouldPause() {
-            return false;
-        }
+        @Override public boolean shouldPause() { return false; }
     }
 }
