@@ -7,6 +7,7 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -35,12 +36,10 @@ public class Smart_pearlClient implements ClientModInitializer {
     private long invOpenTime = 0;
     private boolean wasInvOpen = false;
 
-    // 3-Tick Sequence State
     private int step = 0;
     private int oldSlot = -1;
     private int pearlSlot = -1;
 
-    // --- CONFIG SYSTEM (SmartGap Style) ---
     public static ConfigData config = new ConfigData();
     private static final File CONFIG_FILE = FabricLoader.getInstance().getConfigDir().resolve("smart_pearl.json").toFile();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -54,7 +53,7 @@ public class Smart_pearlClient implements ClientModInitializer {
         loadConfig();
 
         pearlKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Throw Smart Pearl",
+                "key.smart_pearl.throw",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_V,
                 KeyBinding.Category.MISC
@@ -68,25 +67,47 @@ public class Smart_pearlClient implements ClientModInitializer {
             }));
         });
 
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (client.player == null) return;
+        // --- HUD RENDERER ---
+        HudRenderCallback.EVENT.register((context, tickCounter) -> {
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client.player == null || client.options.hudHidden) return;
 
-            // Pearl Input
-            while (pearlKey.wasPressed() && step == 0) {
-                startPearlSequence(client);
+            ItemStack pearlStack = null;
+            int totalPearls = 0;
+
+            for (int i = 0; i < client.player.getInventory().size(); i++) {
+                ItemStack stack = client.player.getInventory().getStack(i);
+                if (stack.isOf(Items.ENDER_PEARL)) {
+                    if (pearlStack == null) pearlStack = stack;
+                    totalPearls += stack.getCount();
+                }
             }
 
-            // 3-Tick Logic
+            if (totalPearls > 0 && pearlStack != null) {
+                int x = context.getScaledWindowWidth() / 2 + 95;
+                int y = context.getScaledWindowHeight() - 20;
+                context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
+                context.drawTextWithShadow(client.textRenderer, String.valueOf(totalPearls), x + 18, y + 6, 0xFFFFFF);
+
+                // SAFE FIX (funktioniert immer)
+                float cooldown = client.player.getItemCooldownManager().getCooldownProgress(pearlStack, 0f);
+
+                if (cooldown > 0) {
+                    String cdText = String.format("%.1fs", cooldown * 1.5);
+                    context.drawTextWithShadow(client.textRenderer, "§c" + cdText, x, y - 10, 0xFFFFFF);
+                }
+            }
+        });
+
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (client.player == null) return;
+            while (pearlKey.wasPressed() && step == 0) startPearlSequence(client);
             if (step > 0) runSequence(client);
 
-            // Refill Logic
             boolean isInv = client.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen;
-            if (isInv && !wasInvOpen) {
-                invOpenTime = System.currentTimeMillis();
-            } else if (!isInv && wasInvOpen) {
-                if (System.currentTimeMillis() - invOpenTime <= (config.refillWindow * 1000L)) {
-                    tryRefill(client);
-                }
+            if (isInv && !wasInvOpen) invOpenTime = System.currentTimeMillis();
+            else if (!isInv && wasInvOpen) {
+                if (System.currentTimeMillis() - invOpenTime <= (config.refillWindow * 1000L)) tryRefill(client);
             }
             wasInvOpen = isInv;
         });
@@ -107,6 +128,7 @@ public class Smart_pearlClient implements ClientModInitializer {
 
         if (found != -1 && pearlStack != null) {
             if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
+
             this.oldSlot = client.player.getInventory().getSelectedSlot();
             this.pearlSlot = found;
             this.step = 1;
@@ -115,16 +137,16 @@ public class Smart_pearlClient implements ClientModInitializer {
 
     private void runSequence(MinecraftClient client) {
         switch (step) {
-            case 1 -> { // Tick 1: Switch to Pearl
+            case 1 -> {
                 client.player.getInventory().setSelectedSlot(pearlSlot);
                 client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(pearlSlot));
                 step = 2;
             }
-            case 2 -> { // Tick 2: Throw
+            case 2 -> {
                 client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
                 step = 3;
             }
-            case 3 -> { // Tick 3: Switch back
+            case 3 -> {
                 client.player.getInventory().setSelectedSlot(oldSlot);
                 client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
                 step = 0;
@@ -140,7 +162,6 @@ public class Smart_pearlClient implements ClientModInitializer {
                 break;
             }
         }
-
         if (invPearl != -1) {
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = client.player.getInventory().getStack(i);
@@ -152,7 +173,6 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
     }
 
-    // --- SAVE & LOAD ---
     public static void saveConfig() {
         try (FileWriter writer = new FileWriter(CONFIG_FILE)) {
             GSON.toJson(config, writer);
@@ -171,15 +191,15 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
     }
 
-    // --- GUI (SmartGap Style) ---
     public static class ConfigScreen extends Screen {
-        public ConfigScreen() { super(Text.literal("Smart Pearl Settings")); }
+        public ConfigScreen() {
+            super(Text.literal("Smart Pearl Settings"));
+        }
 
         @Override
         protected void init() {
             int x = this.width / 2 - 100;
 
-            // Slider for Refill Window
             this.addDrawableChild(new SliderWidget(x, 60, 200, 20,
                     Text.literal(String.format("Refill Timer: %.2fs", config.refillWindow)),
                     (config.refillWindow - 0.01) / 0.99) {
@@ -191,14 +211,17 @@ public class Smart_pearlClient implements ClientModInitializer {
 
                 @Override
                 protected void applyValue() {
-                    config.refillWindow = 0.01f + (float)this.value * 0.99f;
+                    config.refillWindow = 0.01f + (float) this.value * 0.99f;
                 }
             });
 
-            this.addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> {
-                saveConfig();
-                this.client.setScreen(null);
-            }).dimensions(x, 100, 200, 20).build());
+            this.addDrawableChild(ButtonWidget.builder(
+                    Text.literal("Done"),
+                    b -> {
+                        saveConfig();
+                        this.client.setScreen(null);
+                    }
+            ).dimensions(x, 100, 200, 20).build());
         }
 
         @Override
@@ -208,6 +231,9 @@ public class Smart_pearlClient implements ClientModInitializer {
             super.render(context, mouseX, mouseY, delta);
         }
 
-        @Override public boolean shouldPause() { return false; }
+        @Override
+        public boolean shouldPause() {
+            return false;
+        }
     }
 }
