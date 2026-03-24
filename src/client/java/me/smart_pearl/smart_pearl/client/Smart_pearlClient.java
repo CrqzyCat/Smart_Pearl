@@ -1,31 +1,58 @@
 package me.smart_pearl.smart_pearl.client;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerInteractItemC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
 import org.lwjgl.glfw.GLFW;
+
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
 
 public class Smart_pearlClient implements ClientModInitializer {
 
     private static KeyBinding pearlKey;
-    private long inventoryOpenTime = 0;
-    private boolean wasInventoryOpen = false;
+    private long invOpenTime = 0;
+    private boolean wasInvOpen = false;
+
+    // 3-Tick Sequence State
+    private int step = 0;
+    private int oldSlot = -1;
+    private int pearlSlot = -1;
+
+    // --- CONFIG SYSTEM (SmartGap Style) ---
+    public static ConfigData config = new ConfigData();
+    private static final File CONFIG_FILE = FabricLoader.getInstance().getConfigDir().resolve("smart_pearl.json").toFile();
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    public static class ConfigData {
+        public float refillWindow = 0.30f;
+    }
 
     @Override
     public void onInitializeClient() {
+        loadConfig();
+
         pearlKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "Throw Smart Pearl",
                 InputUtil.Type.KEYSYM,
@@ -33,139 +60,154 @@ public class Smart_pearlClient implements ClientModInitializer {
                 KeyBinding.Category.MISC
         ));
 
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
+            dispatcher.register(ClientCommandManager.literal("smartpearl").executes(context -> {
+                MinecraftClient client = MinecraftClient.getInstance();
+                client.execute(() -> client.setScreen(new ConfigScreen()));
+                return 1;
+            }));
+        });
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) return;
 
-            while (pearlKey.wasPressed()) {
-                executeSmartPearl(client);
+            // Pearl Input
+            while (pearlKey.wasPressed() && step == 0) {
+                startPearlSequence(client);
             }
 
-            // 0.3s Refill Logic
-            boolean isInvOpen = client.currentScreen instanceof InventoryScreen;
-            if (isInvOpen && !wasInventoryOpen) {
-                inventoryOpenTime = System.currentTimeMillis();
-            } else if (!isInvOpen && wasInventoryOpen) {
-                long duration = System.currentTimeMillis() - inventoryOpenTime;
-                if (duration <= 300) {
-                    tryRefillHotbar(client);
+            // 3-Tick Logic
+            if (step > 0) runSequence(client);
+
+            // Refill Logic
+            boolean isInv = client.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen;
+            if (isInv && !wasInvOpen) {
+                invOpenTime = System.currentTimeMillis();
+            } else if (!isInv && wasInvOpen) {
+                if (System.currentTimeMillis() - invOpenTime <= (config.refillWindow * 1000L)) {
+                    tryRefill(client);
                 }
             }
-            wasInventoryOpen = isInvOpen;
-        });
-
-        HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
-            renderPearlHud(drawContext, MinecraftClient.getInstance());
+            wasInvOpen = isInv;
         });
     }
 
-    private void executeSmartPearl(MinecraftClient client) {
-        if (client.player == null || client.interactionManager == null || client.getNetworkHandler() == null) return;
-
-        boolean isMoving = client.options.forwardKey.isPressed() ||
-                client.options.backKey.isPressed() ||
-                client.options.leftKey.isPressed() ||
-                client.options.rightKey.isPressed();
-
-        int pearlSlot = -1;
+    private void startPearlSequence(MinecraftClient client) {
+        int found = -1;
         ItemStack pearlStack = null;
 
-        for (int i = 0; i < 36; i++) {
+        for (int i = 0; i < 9; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
-            if (!stack.isEmpty() && stack.isOf(Items.ENDER_PEARL)) {
-                if (!isMoving || i < 9) {
-                    pearlSlot = i;
-                    pearlStack = stack;
-                    break;
-                }
-            }
-        }
-
-        if (pearlSlot != -1 && pearlStack != null) {
-            // FIX for image_9a47be.png: Use the ItemStack for the cooldown check
-            if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
-
-            int oldSlot = client.player.getInventory().getSelectedSlot();
-
-            if (pearlSlot < 9) {
-                if (pearlSlot != oldSlot) {
-                    client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(pearlSlot));
-                }
-                sendInteractPacket(client);
-                if (pearlSlot != oldSlot) {
-                    client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
-                }
-            } else {
-                // Stop sprinting to avoid illegal packet kicks
-                client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
-                client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
-                sendInteractPacket(client);
-                client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlSlot, oldSlot, SlotActionType.SWAP, client.player);
-            }
-        }
-    }
-
-    private void tryRefillHotbar(MinecraftClient client) {
-        if (client.player == null || client.interactionManager == null || client.getNetworkHandler() == null) return;
-
-        int pearlInInv = -1;
-        for (int i = 9; i < 36; i++) {
-            if (client.player.getInventory().getStack(i).isOf(Items.ENDER_PEARL)) {
-                pearlInInv = i;
+            if (stack.isOf(Items.ENDER_PEARL)) {
+                found = i;
+                pearlStack = stack;
                 break;
             }
         }
 
-        if (pearlInInv != -1) {
-            for (int h = 0; h < 9; h++) {
-                ItemStack stack = client.player.getInventory().getStack(h);
+        if (found != -1 && pearlStack != null) {
+            if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
+            this.oldSlot = client.player.getInventory().getSelectedSlot();
+            this.pearlSlot = found;
+            this.step = 1;
+        }
+    }
+
+    private void runSequence(MinecraftClient client) {
+        switch (step) {
+            case 1 -> { // Tick 1: Switch to Pearl
+                client.player.getInventory().setSelectedSlot(pearlSlot);
+                client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(pearlSlot));
+                step = 2;
+            }
+            case 2 -> { // Tick 2: Throw
+                client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
+                step = 3;
+            }
+            case 3 -> { // Tick 3: Switch back
+                client.player.getInventory().setSelectedSlot(oldSlot);
+                client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
+                step = 0;
+            }
+        }
+    }
+
+    private void tryRefill(MinecraftClient client) {
+        int invPearl = -1;
+        for (int i = 9; i < 36; i++) {
+            if (client.player.getInventory().getStack(i).isOf(Items.ENDER_PEARL)) {
+                invPearl = i;
+                break;
+            }
+        }
+
+        if (invPearl != -1) {
+            for (int i = 0; i < 9; i++) {
+                ItemStack stack = client.player.getInventory().getStack(i);
                 if (stack.isEmpty() || (stack.isOf(Items.ENDER_PEARL) && stack.getCount() < 16)) {
-                    // Prevents kicks during automatic refill while running
-                    if (client.player.isSprinting()) {
-                        client.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(client.player, ClientCommandC2SPacket.Mode.STOP_SPRINTING));
-                    }
-                    client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, pearlInInv, h, SlotActionType.SWAP, client.player);
+                    client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, invPearl, i, SlotActionType.SWAP, client.player);
                     break;
                 }
             }
         }
     }
 
-    private void renderPearlHud(DrawContext context, MinecraftClient client) {
-        if (client.player == null || client.options.hudHidden) return;
-
-        int total = 0;
-        int hotbar = 0;
-        ItemStack displayStack = null;
-
-        for (int i = 0; i < client.player.getInventory().size(); i++) {
-            ItemStack s = client.player.getInventory().getStack(i);
-            if (s.isOf(Items.ENDER_PEARL)) {
-                total += s.getCount();
-                if (i < 9) hotbar += s.getCount();
-                if (displayStack == null) displayStack = s;
-            }
-        }
-
-        if (total <= 0 || displayStack == null) return;
-
-        int x = (context.getScaledWindowWidth() / 2) + 95;
-        int y = context.getScaledWindowHeight() - 20;
-
-        context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
-        int color = (hotbar > 0) ? 0xFFFFFFFF : 0xFFFF5555;
-        context.drawTextWithShadow(client.textRenderer, "x" + total, x + 18, y + 6, color);
-
-        // FIX for image_9a47be.png: Use ItemStack for cooldown progress
-        float progress = client.player.getItemCooldownManager().getCooldownProgress(displayStack, 0.0f);
-        if (progress > 0.0f) {
-            String cooldownText = String.format("%.1fs", progress * 2.5f);
-            context.drawTextWithShadow(client.textRenderer, cooldownText, x, y - 10, 0xFFFF5555);
+    // --- SAVE & LOAD ---
+    public static void saveConfig() {
+        try (FileWriter writer = new FileWriter(CONFIG_FILE)) {
+            GSON.toJson(config, writer);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
     }
 
-    private void sendInteractPacket(MinecraftClient client) {
-        if (client.getNetworkHandler() != null && client.player != null) {
-            client.getNetworkHandler().sendPacket(new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch()));
+    private void loadConfig() {
+        if (CONFIG_FILE.exists()) {
+            try (FileReader reader = new FileReader(CONFIG_FILE)) {
+                config = GSON.fromJson(reader, ConfigData.class);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
+    }
+
+    // --- GUI (SmartGap Style) ---
+    public static class ConfigScreen extends Screen {
+        public ConfigScreen() { super(Text.literal("Smart Pearl Settings")); }
+
+        @Override
+        protected void init() {
+            int x = this.width / 2 - 100;
+
+            // Slider for Refill Window
+            this.addDrawableChild(new SliderWidget(x, 60, 200, 20,
+                    Text.literal(String.format("Refill Timer: %.2fs", config.refillWindow)),
+                    (config.refillWindow - 0.01) / 0.99) {
+
+                @Override
+                protected void updateMessage() {
+                    this.setMessage(Text.literal(String.format("Refill Timer: %.2fs", config.refillWindow)));
+                }
+
+                @Override
+                protected void applyValue() {
+                    config.refillWindow = 0.01f + (float)this.value * 0.99f;
+                }
+            });
+
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> {
+                saveConfig();
+                this.client.setScreen(null);
+            }).dimensions(x, 100, 200, 20).build());
+        }
+
+        @Override
+        public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+            this.renderInGameBackground(context);
+            context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 25, 0xFFFFFF);
+            super.render(context, mouseX, mouseY, delta);
+        }
+
+        @Override public boolean shouldPause() { return false; }
     }
 }
