@@ -66,7 +66,7 @@ public class Smart_pearlClient implements ClientModInitializer {
 
         // Register the key binding for throwing the pearl
         pearlKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.smart_pearl.throw", // Translation key for the key binding name
+                "Throw Smart Pearl", // Translation key for the key binding name
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_V, // Default key
                 KeyBinding.Category.MISC // Key binding category
