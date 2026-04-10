@@ -30,59 +30,98 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 
+/**
+ * Main client class for the Smart Pearl mod.
+ *
+ * <p>This mod provides:
+ * <ul>
+ *     <li>Fast ender pearl throwing via keybind</li>
+ *     <li>Automatic hotbar refill from inventory</li>
+ *     <li>HUD display for pearl count and cooldown</li>
+ *     <li>Configurable refill timing</li>
+ * </ul>
+ *
+ * <p>All logic is handled client-side using Fabric API events.
+ */
 public class Smart_pearlClient implements ClientModInitializer {
 
-    // Key binding for throwing the pearl
+    /** Key binding used to trigger the smart pearl throw */
     private static KeyBinding pearlKey;
-    // Time when the inventory was opened
+
+    /** Timestamp when the inventory screen was opened */
     private long invOpenTime = 0;
-    // Flag to check if the inventory was open in the previous tick
+
+    /** Tracks whether the inventory was open in the previous tick */
     private boolean wasInvOpen = false;
 
-    // Current step in the pearl throwing sequence
+    /**
+     * Current step in the pearl execution sequence:
+     * 0 = idle
+     * 1 = switch slot
+     * 2 = throw pearl
+     * 3 = switch back
+     */
     private int step = 0;
-    // The player's selected slot before throwing the pearl
+
+    /** Previously selected hotbar slot before throwing */
     private int oldSlot = -1;
-    // The slot containing the ender pearl
+
+    /** Hotbar slot containing the ender pearl */
     private int pearlSlot = -1;
 
-    // Configuration data for the mod
+    /** Runtime configuration instance */
     public static ConfigData config = new ConfigData();
-    // The configuration file
+
+    /** Path to the config file inside Fabric config directory */
     private static final File CONFIG_FILE = FabricLoader.getInstance().getConfigDir().resolve("smart_pearl.json").toFile();
-    // Gson instance for handling JSON serialization
+
+    /** Gson instance for serialization/deserialization */
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    // Class to hold configuration data
+    /**
+     * Configuration data class.
+     *
+     * <p>Stores user-defined values that are persisted to disk.
+     */
     public static class ConfigData {
-        // The time window in seconds to automatically refill pearls after closing the inventory
+        /**
+         * Time window (in seconds) after closing inventory
+         * in which the mod will attempt to refill pearls.
+         */
         public float refillWindow = 0.30f;
     }
 
     @Override
     public void onInitializeClient() {
-        // Load the configuration from the file
+        /** Load config from file (if present) */
         loadConfig();
 
-        // Register the key binding for throwing the pearl
+        /** Register key binding for smart pearl throw */
         pearlKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "Throw Smart Pearl", // Translation key for the key binding name
+                "Throw Smart Pearl",
                 InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_V, // Default key
-                KeyBinding.Category.MISC // Key binding category
+                GLFW.GLFW_KEY_V,
+                KeyBinding.Category.MISC
         ));
 
-        // Register a client command to open the configuration screen
+        /**
+         * Register client-side command:
+         * /smartpearl → opens config GUI
+         */
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             dispatcher.register(ClientCommandManager.literal("smartpearl").executes(context -> {
                 MinecraftClient client = MinecraftClient.getInstance();
-                // Execute on the main client thread to avoid concurrency issues
+
+                // Ensure GUI opens on main thread
                 client.execute(() -> client.setScreen(new ConfigScreen()));
-                return 1; // Command executed successfully
+                return 1;
             }));
         });
 
-        // Register a HUD render callback to display pearl count and cooldown
+        /**
+         * HUD rendering:
+         * Displays total pearl count + cooldown indicator
+         */
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null || client.options.hudHidden) return;
@@ -90,7 +129,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             ItemStack pearlStack = null;
             int totalPearls = 0;
 
-            // Count all ender pearls in the player's inventory
+            /** Count all pearls in inventory */
             for (int i = 0; i < client.player.getInventory().size(); i++) {
                 ItemStack stack = client.player.getInventory().getStack(i);
                 if (stack.isOf(Items.ENDER_PEARL)) {
@@ -99,27 +138,25 @@ public class Smart_pearlClient implements ClientModInitializer {
                 }
             }
 
-            // If there are pearls, render the HUD element
+            /** Render HUD only if player has pearls */
             if (totalPearls > 0 && pearlStack != null) {
                 int x = context.getScaledWindowWidth() / 2 + 95;
                 int y = context.getScaledWindowHeight() - 20;
 
-                // Draw the ender pearl item
                 context.drawItem(new ItemStack(Items.ENDER_PEARL), x, y);
 
-                // Draw the pearl count, shifted to the left
                 String countText = "x" + totalPearls;
                 float scale = 0.7f;
 
                 context.getMatrices().pushMatrix();
-                context.getMatrices().translate(x + 12, y + 11); // Position the text relative to the item
+                context.getMatrices().translate(x + 12, y + 11);
                 context.getMatrices().scale(scale, scale);
 
                 context.drawTextWithShadow(client.textRenderer, countText, 0, 0, 0xFFFFFFFF);
 
                 context.getMatrices().popMatrix();
 
-                // Draw the cooldown timer if the item is on cooldown
+                /** Display cooldown if pearl is currently cooling down */
                 float cooldown = client.player.getItemCooldownManager().getCooldownProgress(pearlStack, 0f);
                 if (cooldown > 0) {
                     String cdText = String.format("%.1fs", cooldown * 1.5);
@@ -129,18 +166,22 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         });
 
-        // Register a client tick event to handle key presses and sequences
+        /**
+         * Main client tick loop:
+         * Handles key input, pearl sequence, and auto-refill logic
+         */
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (client.player == null) return;
 
-            // Start the pearl throwing sequence if the key is pressed
+            /** Start pearl sequence on key press */
             while (pearlKey.wasPressed() && step == 0) startPearlSequence(client);
-            // Continue the sequence if it's already in progress
+
+            /** Continue execution if sequence active */
             if (step > 0) runSequence(client);
 
             boolean isInv = client.currentScreen instanceof net.minecraft.client.gui.screen.ingame.InventoryScreen;
 
-            // Check for inventory closing to trigger auto-refill
+            /** Track inventory open/close timing */
             if (isInv && !wasInvOpen) invOpenTime = System.currentTimeMillis();
             else if (!isInv && wasInvOpen) {
                 if (System.currentTimeMillis() - invOpenTime <= (config.refillWindow * 1000L)) {
@@ -151,12 +192,16 @@ public class Smart_pearlClient implements ClientModInitializer {
         });
     }
 
-    // Starts the sequence of throwing an ender pearl
+    /**
+     * Initializes the pearl throwing sequence.
+     *
+     * <p>Searches hotbar for a usable pearl and prepares slot switching.
+     */
     private void startPearlSequence(MinecraftClient client) {
         int found = -1;
         ItemStack pearlStack = null;
 
-        // Find an ender pearl in the hotbar
+        /** Search hotbar (slots 0–8) */
         for (int i = 0; i < 9; i++) {
             ItemStack stack = client.player.getInventory().getStack(i);
             if (stack.isOf(Items.ENDER_PEARL)) {
@@ -166,7 +211,7 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         }
 
-        // If a pearl is found and not on cooldown, start the sequence
+        /** Only proceed if pearl exists and is not on cooldown */
         if (found != -1 && pearlStack != null) {
             if (client.player.getItemCooldownManager().isCoolingDown(pearlStack)) return;
 
@@ -176,33 +221,46 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
     }
 
-    // Executes the steps of the pearl throwing sequence
+    /**
+     * Executes the multi-step pearl throwing sequence.
+     *
+     * <p>Steps:
+     * <ol>
+     *     <li>Switch to pearl slot</li>
+     *     <li>Use pearl</li>
+     *     <li>Switch back</li>
+     * </ol>
+     */
     private void runSequence(MinecraftClient client) {
         switch (step) {
-            case 1 -> { // Switch to the pearl slot
+            case 1 -> {
                 client.player.getInventory().setSelectedSlot(pearlSlot);
                 client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(pearlSlot));
                 step = 2;
             }
-            case 2 -> { // Use the item (throw the pearl)
+            case 2 -> {
                 client.getNetworkHandler().sendPacket(
                         new PlayerInteractItemC2SPacket(Hand.MAIN_HAND, 0, client.player.getYaw(), client.player.getPitch())
                 );
                 step = 3;
             }
-            case 3 -> { // Switch back to the original slot
+            case 3 -> {
                 client.player.getInventory().setSelectedSlot(oldSlot);
                 client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(oldSlot));
-                step = 0; // End of sequence
+                step = 0;
             }
         }
     }
 
-    // Tries to refill the hotbar with ender pearls from the main inventory
+    /**
+     * Attempts to refill the hotbar with pearls from main inventory.
+     *
+     * <p>Triggered after closing inventory within configured time window.
+     */
     private void tryRefill(MinecraftClient client) {
         int invPearl = -1;
 
-        // Find an ender pearl in the main inventory
+        /** Search inventory (slots 9–35) */
         for (int i = 9; i < 36; i++) {
             if (client.player.getInventory().getStack(i).isOf(Items.ENDER_PEARL)) {
                 invPearl = i;
@@ -210,13 +268,11 @@ public class Smart_pearlClient implements ClientModInitializer {
             }
         }
 
-        // If a pearl is found in the inventory, move it to the hotbar
+        /** Move pearl into hotbar if possible */
         if (invPearl != -1) {
             for (int i = 0; i < 9; i++) {
                 ItemStack stack = client.player.getInventory().getStack(i);
-                // Find an empty slot or a non-full stack of ender pearls in the hotbar
                 if (stack.isEmpty() || (stack.isOf(Items.ENDER_PEARL) && stack.getCount() < 16)) {
-                    // Use slot action to swap the items
                     client.interactionManager.clickSlot(
                             client.player.currentScreenHandler.syncId,
                             invPearl,
@@ -230,7 +286,7 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
     }
 
-    // Saves the current configuration to the config file
+    /** Saves config to disk */
     public static void saveConfig() {
         try (FileWriter writer = new FileWriter(CONFIG_FILE)) {
             GSON.toJson(config, writer);
@@ -239,7 +295,7 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
     }
 
-    // Loads the configuration from the config file
+    /** Loads config from disk if available */
     private void loadConfig() {
         if (CONFIG_FILE.exists()) {
             try (FileReader reader = new FileReader(CONFIG_FILE)) {
@@ -250,7 +306,11 @@ public class Smart_pearlClient implements ClientModInitializer {
         }
     }
 
-    // The configuration screen GUI
+    /**
+     * Simple config GUI screen.
+     *
+     * <p>Allows user to adjust refill timing via slider.
+     */
     public static class ConfigScreen extends Screen {
 
         public ConfigScreen() {
@@ -261,7 +321,7 @@ public class Smart_pearlClient implements ClientModInitializer {
         protected void init() {
             int x = this.width / 2 - 100;
 
-            // Add a slider to configure the refill timer
+            /** Slider for refill timing */
             this.addDrawableChild(new SliderWidget(
                     x, 60, 200, 20,
                     Text.literal(String.format("Refill Timer: %.2fs", config.refillWindow)),
@@ -278,7 +338,7 @@ public class Smart_pearlClient implements ClientModInitializer {
                 }
             });
 
-            // Add a "Done" button to save the configuration and close the screen
+            /** Save + close button */
             this.addDrawableChild(
                     ButtonWidget.builder(Text.literal("Done"), b -> {
                         saveConfig();
@@ -296,7 +356,7 @@ public class Smart_pearlClient implements ClientModInitializer {
 
         @Override
         public boolean shouldPause() {
-            return false; // Do not pause the game when this screen is open
+            return false;
         }
     }
 }
